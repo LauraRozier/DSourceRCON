@@ -233,12 +233,10 @@ begin
 end;
 
 procedure TSourceRCON.SendRCONPacket(aPacket: TRCONPacket);
-type
-  PBytes = ^TBytes;
 var
-  Buff:   Pointer;
-  Len:    Cardinal;
-  DebugVar: TBytes;
+  Buff:     Pointer;
+  Len:      Cardinal;
+  ByteBuff: TBytes;
 begin
   if fSocket.State = wsConnected then
   begin
@@ -251,17 +249,16 @@ begin
     PInteger(Cardinal(Buff) + MARKER_TYPE)^ := Integer(aPacket.PacketType);
 
     if Len > REAL_RCON_HEADER_SIZE then
+    begin
+
       Move(
-        PAnsiChar(aPacket.Data)^,
+        TByteConverter.GetBytes(aPacket.Data)[0],
         Pointer(cardinal(Buff) + MARKER_DATA)^,
         aPacket.DataSize
       );
+    end;
 
     PWord(Cardinal(Buff) + (Len - 2))^ := 0;
-
-    SetLength(DebugVar, Len);
-    Move(Buff^, DebugVar[0], Len);
-
     fSocket.Send(Buff, Len);
     FreeMem(Buff);
   end;
