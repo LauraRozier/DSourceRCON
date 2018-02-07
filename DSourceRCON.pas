@@ -67,7 +67,7 @@ unit DSourceRCON;
 
 interface
 uses
-  Classes, SysUtils, AnsiStrings,
+  Classes, SysUtils, AnsiStrings, Math,
   OverbyteIcsWSocket,
   DByteArrayCompat;
 
@@ -115,6 +115,7 @@ type
       fDataQueueLength: Integer;
       fPassword:        string;
       fSendNullPacket:  Boolean;
+      fTempPacket:      TRCONPacket;
     procedure SendRCONPacket(aPacket: TRCONPacket);
     procedure Connected(Sender: TObject; ErrCode: Word);
     procedure Disconnected(Sender: TObject; ErrCode: Word);
@@ -126,7 +127,7 @@ type
     procedure TriggerSentEvent(aPacket: TRCONPacket);
     procedure TriggerReplyEvent(aPacket: TRCONPacket);
   public
-    constructor Create(aSendNullPacket: Boolean = False);
+    constructor Create(aSendNullPacket: Boolean = True);
     destructor Destroy; override;
     function Connect(aEndpoint: TIPEndPoint; aPassword: string): Boolean;
     procedure Disconnect;
@@ -143,7 +144,7 @@ function LazyPacketTypeToString(aType: TRCONPacketType): string;
 implementation
 
 { TSourceRCON }
-constructor TSourceRCON.Create(aSendNullPacket: Boolean = False);
+constructor TSourceRCON.Create(aSendNullPacket: Boolean = True);
 begin
   SetLength(fDataQueue, 0);
   fDataQueueLength := 0;
@@ -168,10 +169,16 @@ begin
     Exit;
   end;
 
+  Randomize;
   Result    := True;
   fPassword := aPassword;
   SetLength(fDataQueue, 0);
-  fDataQueueLength           := 0;
+  fDataQueueLength       := 0;
+  fTempPacket.DataSize   := 0;
+  fTempPacket.RequestId  := 0;
+  fTempPacket.PacketType := SERVERDATA_RESPONSE_VALUE;
+  fTempPacket.Data       := EmptyAnsiStr;
+
   fSocket                    := TWSocket.Create(nil);
   fSocket.ComponentOptions   := [wsoTcpNoDelay];
   fSocket.Proto              := 'tcp';
@@ -216,7 +223,7 @@ var
 begin
   TmpStr            := AnsiString(aCommand);
   Packet.DataSize   := Length(TmpStr);
-  Packet.RequestId  := 2;
+  Packet.RequestId  := RandomRange(2, 4096);
   Packet.PacketType := SERVERDATA_EXECCOMMAND;
   Packet.Data       := TmpStr;
   SendRCONPacket(Packet);
@@ -224,7 +231,7 @@ begin
   if fSendNullPacket then
   begin
     HackPack.DataSize   := 0;
-    HackPack.RequestId  := 3;
+    HackPack.RequestId  := RandomRange(2, 4096);
     HackPack.PacketType := SERVERDATA_RESPONSE_VALUE;
     HackPack.Data       := EmptyAnsiStr;
     SendRCONPacket(HackPack);
@@ -331,7 +338,7 @@ begin
   begin
     PacketLength := IsSRCDSMirrorPacket;
 
-    if PacketLength = 0 then
+    if (PacketLength = 0) and (fDataQueueLength >= REAL_RCON_HEADER_SIZE) then
     begin
       Packet.DataSize   := PInteger(@fDataQueue[MARKER_SIZE])^ - RCON_HEADER_SIZE;
       Packet.RequestId  := PInteger(@fDataQueue[MARKER_ID])^;
@@ -352,16 +359,14 @@ begin
         );
       end else
         Packet.Data := '';
+
+      TriggerReplyEvent(Packet);
     end;
 
-    Assert(PacketLength <= fDataQueueLength);
-    fDataQueue := Copy( // Trim buffer
-      fDataQueue,
-      PacketLength,
-      Length(fDataQueue) - PacketLength
-    );
+    Assert(PacketLength <= fDataQueueLength, 'PacketLength is greater then fDataQueueLength');
+    // Trim buffer
+    fDataQueue := Copy(fDataQueue, PacketLength, Length(fDataQueue) - PacketLength);
     Dec(fDataQueueLength, PacketLength);
-    TriggerReplyEvent(Packet);
   end;
 end;
 
@@ -388,8 +393,8 @@ end;
 
 procedure TSourceRCON.TriggerDisconnectEvent(aSender: TObject);
 begin
-  if Assigned(fDisconnectEvent) then
-    fDisconnectEvent(aSender);
+  Assert(Assigned(fDisconnectEvent), 'Disconnect event SHOULD ALWAYS be assigned.');
+  fDisconnectEvent(aSender);
 end;
 
 procedure TSourceRCON.TriggerErrorEvent(aMessage: string);
@@ -404,10 +409,31 @@ begin
     fSentEvent(aPacket);
 end;
 
+{
+  If we sent a NullPacket we help the lib user, by collecting data packets until
+  the ID changes.
+}
 procedure TSourceRCON.TriggerReplyEvent(aPacket: TRCONPacket);
 begin
-  if Assigned(fReplyEvent) then
+  Assert(Assigned(fReplyEvent), 'Reply event SHOULD ALWAYS be assigned.');
+
+  if (aPacket.PacketType = SERVERDATA_AUTH_RESPONSE) or not fSendNullPacket then
+  begin
     fReplyEvent(aPacket);
+  end else
+  begin
+    if fTempPacket.DataSize = 0 then
+      fTempPacket := aPacket
+    else if fTempPacket.RequestId <> aPacket.RequestId then
+    begin
+      fReplyEvent(fTempPacket);
+      fTempPacket := aPacket;
+    end else
+    begin
+      Inc(fTempPacket.DataSize, aPacket.DataSize);
+      fTempPacket.Data := fTempPacket.Data + aPacket.Data;
+    end;
+  end;
 end;
 
 function LazyPacketTypeToString(aType: TRCONPacketType): string;
