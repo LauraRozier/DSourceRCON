@@ -124,12 +124,16 @@ const
 
 type
   TSquadRconClient = class sealed(TObject)
-  private
-    fRCON:            TSourceRCON;
-    fDisconnectEvent: TNotifyEvent;
-    fErrorEvent,
-    fSentEvent,
-    fReplyEvent:      TMessageNotifyEvent;
+  strict private
+    const
+      PACKET_MSG_FMT = 'Packet %s:'#13#10'  Size: %d'#13#10'  ID: %d'#13#10 +
+                       '  Type: %s'#13#10'  Data: %s';
+    var
+      fRCON:            TSourceRCON;
+      fDisconnectEvent: TNotifyEvent;
+      fErrorEvent,
+      fSentEvent,
+      fReplyEvent:      TMessageNotifyEvent;
     procedure TriggerDisconnectEvent(Sender: TObject);
     procedure TriggerErrorEvent(aMessage: string);
     procedure TriggerSentEvent(aPacket: TRCONPacket);
@@ -191,9 +195,8 @@ end;
 procedure TSquadRconClient.TriggerDisconnectEvent(Sender: TObject);
 begin
   FreeAndNil(fRCON);
-
-  if Assigned(fDisconnectEvent) then
-    fDisconnectEvent(Sender);
+  Assert(Assigned(fDisconnectEvent), 'Disconnect event SHOULD ALWAYS be assigned.');
+  fDisconnectEvent(Sender);
 end;
 
 procedure TSquadRconClient.TriggerErrorEvent(aMessage: string);
@@ -205,60 +208,39 @@ end;
 procedure TSquadRconClient.TriggerSentEvent(aPacket: TRCONPacket);
 begin
   if Assigned(fSentEvent) then
-    fSentEvent(
-      Format(
-        'Packet sent:%s  Size: %d%s  ID: %d%s  Type: %s%s  Data: %s',
-        [
-          sLineBreak,
-          aPacket.DataSize,
-          sLineBreak,
-          aPacket.RequestId,
-          sLineBreak,
-          LazyPacketTypeToString(aPacket.PacketType),
-          sLineBreak,
-          IfThen(
-            aPacket.PacketType = SERVERDATA_AUTH,
-            '<PASSWORD>',
-            string(aPacket.Data)
-          )
-        ]
+    fSentEvent(Format(PACKET_MSG_FMT, [
+      'sent',
+      aPacket.DataSize,
+      aPacket.RequestId,
+      LazyPacketTypeToString(aPacket.PacketType),
+      IfThen(
+        aPacket.PacketType = SERVERDATA_AUTH,
+        '<PASSWORD>',
+        string(aPacket.Data)
       )
-    );
+    ]));
 end;
 
 procedure TSquadRconClient.TriggerReplyEvent(aPacket: TRCONPacket);
 begin
-  if Assigned(fReplyEvent) then
+  Assert(Assigned(fReplyEvent), 'Reply event SHOULD ALWAYS be assigned.');
+
+  if aPacket.PacketType = SERVERDATA_AUTH_RESPONSE then
   begin
-    if aPacket.PacketType = SERVERDATA_AUTH_RESPONSE then
-    begin
-      if aPacket.RequestId = -1 then
-        fReplyEvent('Failed to authenticate')
-      else
-        fReplyEvent('Successfully authenticated');
-    end else
-    begin
-      if aPacket.Data <> '' then
-        fReplyEvent(
-          Format(
-            'Packet sent:%s  Size: %d%s  ID: %d%s  Type: %s%s  Data: %s',
-            [
-              sLineBreak,
-              aPacket.DataSize,
-              sLineBreak,
-              aPacket.RequestId,
-              sLineBreak,
-              LazyPacketTypeToString(aPacket.PacketType),
-              sLineBreak,
-              IfThen(
-                aPacket.PacketType = SERVERDATA_AUTH,
-                '<PASSWORD>',
-                string(aPacket.Data)
-              )
-            ]
-          )
-        );
-    end;
+      fReplyEvent(IfThen(
+        aPacket.RequestId = -1,
+        'Failed to authenticate',
+        'Successfully authenticated'
+      ));
+  end else
+  begin
+    fReplyEvent(Format(PACKET_MSG_FMT, [
+      'received',
+      aPacket.DataSize,
+      aPacket.RequestId,
+      LazyPacketTypeToString(aPacket.PacketType),
+      string(aPacket.Data)
+    ]));
   end;
 end;
 
