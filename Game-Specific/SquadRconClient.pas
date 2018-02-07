@@ -126,12 +126,12 @@ type
   TSquadRconClient = class sealed(TObject)
   private
     fRCON:            TSourceRCON;
-    fErrorEvent:      TMessageNotifyEvent;
     fDisconnectEvent: TNotifyEvent;
-    fSentEvent:       TMessageNotifyEvent;
+    fErrorEvent,
+    fSentEvent,
     fReplyEvent:      TMessageNotifyEvent;
-    procedure TriggerErrorEvent(aMessage: string);
     procedure TriggerDisconnectEvent(Sender: TObject);
+    procedure TriggerErrorEvent(aMessage: string);
     procedure TriggerSentEvent(aPacket: TRCONPacket);
     procedure TriggerReplyEvent(aPacket: TRCONPacket);
   public
@@ -139,8 +139,8 @@ type
     destructor Destroy; override;
     function Connect(aAddress: string; aPort: Word; aPassword: string): Boolean;
     procedure Send(aCommand: string);
-    property OnError:      TMessageNotifyEvent read fErrorEvent      write fErrorEvent;
     property OnDisconnect: TNotifyEvent        read fDisconnectEvent write fDisconnectEvent;
+    property OnError:      TMessageNotifyEvent read fErrorEvent      write fErrorEvent;
     property OnSent:       TMessageNotifyEvent read fSentEvent       write fSentEvent;
     property OnReply:      TMessageNotifyEvent read fReplyEvent      write fReplyEvent;
   end;
@@ -151,8 +151,8 @@ implementation
 constructor TSquadRconClient.Create;
 begin
   fRCON              := TSourceRCON.Create;
-  fRCON.OnError      := TriggerErrorEvent;
   fRCON.OnDisconnect := TriggerDisconnectEvent;
+  fRCON.OnError      := TriggerErrorEvent;
   fRCON.OnSent       := TriggerSentEvent;
   fRCON.OnReply      := TriggerReplyEvent;
 end;
@@ -188,18 +188,18 @@ begin
     fRCON.ServerCommand(aCommand);
 end;
 
-procedure TSquadRconClient.TriggerErrorEvent(aMessage: string);
-begin
-  if Assigned(fErrorEvent) then
-    fErrorEvent(aMessage);
-end;
-
 procedure TSquadRconClient.TriggerDisconnectEvent(Sender: TObject);
 begin
   FreeAndNil(fRCON);
 
   if Assigned(fDisconnectEvent) then
     fDisconnectEvent(Sender);
+end;
+
+procedure TSquadRconClient.TriggerErrorEvent(aMessage: string);
+begin
+  if Assigned(fErrorEvent) then
+    fErrorEvent(aMessage);
 end;
 
 procedure TSquadRconClient.TriggerSentEvent(aPacket: TRCONPacket);
