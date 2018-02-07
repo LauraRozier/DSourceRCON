@@ -79,10 +79,9 @@ const
 type
   TRCONPacketType = (
     SERVERDATA_RESPONSE_VALUE = 0,
-    SERVERDATA_EXECCOMMAND    = 2,
     SERVERDATA_AUTH_RESPONSE  = 2,
-    SERVERDATA_AUTH           = 3,
-    None                      = 255
+    SERVERDATA_EXECCOMMAND    = 2,
+    SERVERDATA_AUTH           = 3
   );
 
   TIPEndPoint = record
@@ -108,33 +107,35 @@ type
       MARKER_DATA: Byte = 12;
     var
       fSocket:          TWSocket;
-      fErrorEvent:      TMessageNotifyEvent;
       fDisconnectEvent: TNotifyEvent;
-      fSentEvent:       TPacketNotifyEvent;
+      fErrorEvent:      TMessageNotifyEvent;
+      fSentEvent,
       fReplyEvent:      TPacketNotifyEvent;
       fDataQueue:       TBytes;
       fDataQueueLength: Integer;
       fPassword:        string;
+      fSendNullPacket:  Boolean;
     procedure SendRCONPacket(aPacket: TRCONPacket);
     procedure Connected(Sender: TObject; ErrCode: Word);
     procedure Disconnected(Sender: TObject; ErrCode: Word);
     procedure DataAvailable(Sender: TObject; ErrCode: Word);
     procedure ProcessData(aData: Pointer; aLength: Integer);
     function IsSRCDSMirrorPacket: Integer;
-    procedure TriggerErrorEvent(aMessage: string);
     procedure TriggerDisconnectEvent(aSender: TObject);
+    procedure TriggerErrorEvent(aMessage: string);
     procedure TriggerSentEvent(aPacket: TRCONPacket);
     procedure TriggerReplyEvent(aPacket: TRCONPacket);
   public
-    constructor Create;
+    constructor Create(aSendNullPacket: Boolean = False);
     destructor Destroy; override;
     function Connect(aEndpoint: TIPEndPoint; aPassword: string): Boolean;
     procedure Disconnect;
-    procedure ServerCommand(aCommand: string; aSendNullPacket: Boolean = False);
-    property OnError:      TMessageNotifyEvent read fErrorEvent      write fErrorEvent;
-    property OnDisconnect: TNotifyEvent        read fDisconnectEvent write fDisconnectEvent;
-    property OnSent:       TPacketNotifyEvent  read fSentEvent       write fSentEvent;
-    property OnReply:      TPacketNotifyEvent  read fReplyEvent      write fReplyEvent;
+    procedure ServerCommand(aCommand: string);
+    property OnDisconnect:   TNotifyEvent        read fDisconnectEvent write fDisconnectEvent;
+    property OnError:        TMessageNotifyEvent read fErrorEvent      write fErrorEvent;
+    property OnSent:         TPacketNotifyEvent  read fSentEvent       write fSentEvent;
+    property OnReply:        TPacketNotifyEvent  read fReplyEvent      write fReplyEvent;
+    property SendNullPacket: Boolean             read fSendNullPacket  write fSendNullPacket;
   end;
 
 function LazyPacketTypeToString(aType: TRCONPacketType): string;
@@ -142,10 +143,11 @@ function LazyPacketTypeToString(aType: TRCONPacketType): string;
 implementation
 
 { TSourceRCON }
-constructor TSourceRCON.Create;
+constructor TSourceRCON.Create(aSendNullPacket: Boolean = False);
 begin
   SetLength(fDataQueue, 0);
   fDataQueueLength := 0;
+  fSendNullPacket  := aSendNullPacket;
 end;
 
 destructor TSourceRCON.Destroy;
@@ -206,8 +208,7 @@ begin
   fDataQueueLength := 0;
 end;
 
-procedure TSourceRCON.ServerCommand(aCommand: string;
-                                    aSendNullPacket: Boolean = False);
+procedure TSourceRCON.ServerCommand(aCommand: string);
 var
   Packet,
   HackPack: TRCONPacket;
@@ -220,12 +221,12 @@ begin
   Packet.Data       := TmpStr;
   SendRCONPacket(Packet);
 
-  if aSendNullPacket then
+  if fSendNullPacket then
   begin
     HackPack.DataSize   := 0;
     HackPack.RequestId  := 3;
     HackPack.PacketType := SERVERDATA_RESPONSE_VALUE;
-    HackPack.Data       := EmptyStr;
+    HackPack.Data       := EmptyAnsiStr;
     SendRCONPacket(HackPack);
   end;
 
@@ -234,9 +235,8 @@ end;
 
 procedure TSourceRCON.SendRCONPacket(aPacket: TRCONPacket);
 var
-  Buff:     Pointer;
-  Len:      Cardinal;
-  ByteBuff: TBytes;
+  Buff: Pointer;
+  Len:  Cardinal;
 begin
   if fSocket.State = wsConnected then
   begin
@@ -299,8 +299,8 @@ end;
 
 procedure TSourceRCON.DataAvailable(Sender: TObject; ErrCode: Word);
 var
-  Count:  Integer;
-  Buff:   Pointer;
+  Count: Integer;
+  Buff:  Pointer;
 begin
   if ErrCode <> 0 then
   begin
@@ -331,44 +331,35 @@ begin
   begin
     PacketLength := IsSRCDSMirrorPacket;
 
-    if PacketLength > 0 then
+    if PacketLength = 0 then
     begin
-      fDataQueue := Copy( // Trim buffer
-        fDataQueue,
-        PacketLength,
-        Length(fDataQueue) - PacketLength
-      );
-      Dec(fDataQueueLength, PacketLength);
-      Continue;
+      Packet.DataSize   := PInteger(@fDataQueue[MARKER_SIZE])^ - RCON_HEADER_SIZE;
+      Packet.RequestId  := PInteger(@fDataQueue[MARKER_ID])^;
+      Packet.PacketType := TRCONPacketType(PInteger(@fDataQueue[MARKER_TYPE])^);
+      PacketLength      := Packet.DataSize + REAL_RCON_HEADER_SIZE;
+
+      if Packet.DataSize > 0 then
+      begin
+        Packet.Data := AnsiStrings.StringReplace(
+          TByteConverter.ToAnsiStr(
+            fDataQueue,
+            MARKER_DATA,
+            Packet.DataSize
+          ),
+          #$A,
+          sLineBreak,
+          [rfReplaceAll]
+        );
+      end else
+        Packet.Data := '';
     end;
 
-    Packet.DataSize   := PInteger(@fDataQueue[MARKER_SIZE])^ - RCON_HEADER_SIZE;
-    Packet.RequestId  := PInteger(@fDataQueue[MARKER_ID])^;
-    Packet.PacketType := TRCONPacketType(PInteger(@fDataQueue[MARKER_TYPE])^);
-    PacketLength      := Packet.DataSize + REAL_RCON_HEADER_SIZE;
-
-    if Packet.DataSize > 0 then
-    begin
-      Packet.Data := AnsiStrings.StringReplace(
-        TByteConverter.ToAnsiStr(
-          fDataQueue,
-          MARKER_DATA,
-          Packet.DataSize
-        ),
-        #$A,
-        sLineBreak,
-        [rfReplaceAll]
-      );
-    end else
-      Packet.Data := '';
-
-    if PacketLength <= fDataQueueLength then
-      fDataQueue := Copy( // Trim buffer
-        fDataQueue,
-        PacketLength,
-        Length(fDataQueue) - PacketLength
-      );
-
+    Assert(PacketLength <= fDataQueueLength);
+    fDataQueue := Copy( // Trim buffer
+      fDataQueue,
+      PacketLength,
+      Length(fDataQueue) - PacketLength
+    );
     Dec(fDataQueueLength, PacketLength);
     TriggerReplyEvent(Packet);
   end;
@@ -376,37 +367,35 @@ end;
 
 function TSourceRCON.IsSRCDSMirrorPacket: Integer;
 begin
-  // Error packets may be: 01 00 00 0
+  {
+    Error packets may be either one of the following formats:
+      - 01 00 00 0
+      - 00 01 00 00
+  }
   if (fDataQueue[0] = 0) and (fDataQueue[1] = 1) and
      (fDataQueue[2] = 0) and (fDataQueue[3] = 0) and
      (fDataQueue[4] = 0) and (fDataQueue[5] = 0) and
      (fDataQueue[6] = 0) then
-  begin
-    Result := 7;
-    Exit;
-  // Error packets may also be: 00 01 00 00
-  end else if (fDataQueue[0] = 0) and (fDataQueue[1] = 0) and
-              (fDataQueue[2] = 0) and (fDataQueue[3] = 1) and
-              (fDataQueue[4] = 0) and (fDataQueue[5] = 0) and
-              (fDataQueue[6] = 0) and (fDataQueue[7] = 0) then
-  begin
-    Result := 8;
-    Exit;
-  end;
-
-  Result := 0;
-end;
-
-procedure TSourceRCON.TriggerErrorEvent(aMessage: string);
-begin
-  if Assigned(fErrorEvent) then
-    fErrorEvent(aMessage);
+    Result := 7
+  else if (fDataQueue[0] = 0) and (fDataQueue[1] = 0) and
+          (fDataQueue[2] = 0) and (fDataQueue[3] = 1) and
+          (fDataQueue[4] = 0) and (fDataQueue[5] = 0) and
+          (fDataQueue[6] = 0) and (fDataQueue[7] = 0) then
+    Result := 8
+  else
+    Result := 0;
 end;
 
 procedure TSourceRCON.TriggerDisconnectEvent(aSender: TObject);
 begin
   if Assigned(fDisconnectEvent) then
     fDisconnectEvent(aSender);
+end;
+
+procedure TSourceRCON.TriggerErrorEvent(aMessage: string);
+begin
+  if Assigned(fErrorEvent) then
+    fErrorEvent(aMessage);
 end;
 
 procedure TSourceRCON.TriggerSentEvent(aPacket: TRCONPacket);
@@ -424,34 +413,13 @@ end;
 function LazyPacketTypeToString(aType: TRCONPacketType): string;
 begin
   if aType = SERVERDATA_RESPONSE_VALUE then
-  begin
-    Result := 'SERVERDATA_RESPONSE_VALUE';
-    Exit;
-  end;
-
-  if aType = SERVERDATA_EXECCOMMAND then
-  begin
-    Result := 'SERVERDATA_EXECCOMMAND';
-    Exit;
-  end;
-
-  if aType = SERVERDATA_AUTH_RESPONSE then
-  begin
-    Result := 'SERVERDATA_AUTH_RESPONSE';
-    Exit;
-  end;
-
-  if aType = SERVERDATA_AUTH then
-  begin
+    Result := 'SERVERDATA_RESPONSE_VALUE'
+  else if aType = SERVERDATA_EXECCOMMAND then
+    Result := 'SERVERDATA_EXECCOMMAND'
+  else if aType = SERVERDATA_AUTH_RESPONSE then
+    Result := 'SERVERDATA_AUTH_RESPONSE'
+  else if aType = SERVERDATA_AUTH then
     Result := 'SERVERDATA_AUTH';
-    Exit;
-  end;
-
-  if aType = None then
-  begin
-    Result := 'None';
-    Exit;
-  end;
 end;
 
 end.
