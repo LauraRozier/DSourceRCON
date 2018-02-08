@@ -267,18 +267,21 @@ var
   PlayerInfo:      TArray<string>;
   CurStr:          string;
   ConnectedPlayer: Boolean;
+  I,
   CurrResultItem:  Integer;
 begin
   StrList := aStr.Split(LINE_BREAK_SPLIT, None);
 
-  for CurStr in StrList do
+  for I := 0 to Length(StrList) - 1 do
   begin
+    CurStr := StrList[I].Trim;
+
     if Length(CurStr) <= 0 then
       continue;
 
-    if CompareText(CurStr.Trim, CONNECTED_HEADER) = 0 then
+    if CompareText(CurStr, CONNECTED_HEADER) = 0 then
       ConnectedPlayer := True
-    else if CompareText(CurStr.Trim, DISCONNECTED_HEADER) = 0 then
+    else if CompareText(CurStr, DISCONNECTED_HEADER) = 0 then
       ConnectedPlayer := False
     else
     begin
