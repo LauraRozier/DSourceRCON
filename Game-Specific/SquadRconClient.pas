@@ -123,6 +123,15 @@ const
   );
 
 type
+  TSquadPlayer = record
+    Slot,//:       Integer;
+    PlayerName: string;
+    SteamId:    UInt64;
+    Connected:  Boolean;
+    Time:       string;
+  end;
+  TSquadPlayerArray = array of TSquadPlayer;
+
   TSquadRconClient = class sealed(TObject)
   strict private
     const
@@ -148,6 +157,8 @@ type
     property OnSent:       TMessageNotifyEvent read fSentEvent       write fSentEvent;
     property OnReply:      TMessageNotifyEvent read fReplyEvent      write fReplyEvent;
   end;
+
+function StringToSquadPlayerList(aStr: string): TSquadPlayerArray;
 
 implementation
 
@@ -241,6 +252,52 @@ begin
       LazyPacketTypeToString(aPacket.PacketType),
       string(aPacket.Data)
     ]));
+  end;
+end;
+
+function StringToSquadPlayerList(aStr: string): TSquadPlayerArray;
+const
+  LINE_BREAK_SPLIT: array[0..0] of string = (sLineBreak);
+  COLON_SPLIT:      array[0..0] of Char   = (':');
+  PIPE_SPLIT:       array[0..0] of Char   = ('|');
+  CONNECTED_HEADER    = '----- Active Players -----';
+  DISCONNECTED_HEADER = '----- Recently Disconnected Players [Max of 15] -----';
+var
+  StrList,
+  PlayerInfo:      TArray<string>;
+  CurStr:          string;
+  ConnectedPlayer: Boolean;
+  CurrResultItem:  Integer;
+begin
+  StrList := aStr.Split(LINE_BREAK_SPLIT, None);
+
+  for CurStr in StrList do
+  begin
+    if Length(CurStr) <= 0 then
+      continue;
+
+    if CompareText(CurStr.Trim, CONNECTED_HEADER) = 0 then
+      ConnectedPlayer := True
+    else if CompareText(CurStr.Trim, DISCONNECTED_HEADER) = 0 then
+      ConnectedPlayer := False
+    else
+    begin
+      CurrResultItem := Length(Result);
+      PlayerInfo     := CurStr.Split(COLON_SPLIT, None);     
+      SetLength(Result, CurrResultItem + 1);
+
+      Result[CurrResultItem].Slot      := PlayerInfo[1].Split(PIPE_SPLIT)[0];
+      Result[CurrResultItem].SteamId   := StrToUInt64(PlayerInfo[2].Split(PIPE_SPLIT)[0]);
+      Result[CurrResultItem].Connected := ConnectedPlayer;
+
+      if ConnectedPlayer then
+        Result[CurrResultItem].PlayerName := PlayerInfo[3]
+      else
+      begin                                                                    
+        Result[CurrResultItem].Time       := PlayerInfo[3].Split(PIPE_SPLIT)[0];
+        Result[CurrResultItem].PlayerName := PlayerInfo[4];
+      end;
+    end;
   end;
 end;
 
