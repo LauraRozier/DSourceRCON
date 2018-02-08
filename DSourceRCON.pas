@@ -277,9 +277,7 @@ var
   TmpStr: AnsiString;
 begin
   if ErrCode <> 0 then
-    TriggerErrorEvent(
-      'Error while trying to connect to socket: ' + WSocketErrorDesc(ErrCode)
-    )
+    TriggerErrorEvent('Error while trying to connect to socket: ' + WSocketErrorDesc(ErrCode))
   else
   begin
     fSocket.SetTcpNoDelayOption;
@@ -289,7 +287,7 @@ begin
 
   TmpStr            := AnsiString(fPassword);
   Packet.DataSize   := Length(TmpStr);
-  Packet.RequestId  := 1;
+  Packet.RequestId  := 1; // Let's have auth as 1 so it's always unique
   Packet.PacketType := SERVERDATA_AUTH;
   Packet.Data       := TmpStr;
   SendRCONPacket(Packet);
