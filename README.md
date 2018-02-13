@@ -1,4 +1,6 @@
-# DSourceRCON
+[license]: https://tldrlegal.com/l/mit
+
+# DSourceRCON [![License](http://img.shields.io/badge/license-MIT-lightgrey.svg?style=flat)][License]
 Delphi implementation of the Source RCON
 
 ## Requirements:
